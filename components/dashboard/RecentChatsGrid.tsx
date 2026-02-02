@@ -5,18 +5,28 @@ import { motion } from "framer-motion";
 import { MessageSquare, MoreVertical, Pin, Clock } from "lucide-react";
 
 const recentChats = [
-    { id: 1, title: "React Architecture Plan", date: "2 mins ago", preview: "Let's discuss the folder structure...", pinned: true, color: "from-blue-500/20 to-cyan-500/20" },
-    { id: 2, title: "Python Data Analysis", date: "4 hours ago", preview: "Import pandas as pd...", pinned: true, color: "from-purple-500/20 to-pink-500/20" },
-    { id: 3, title: "Email Drafts", date: "Yesterday", preview: "Subject: Project update...", pinned: false, color: "from-green-500/20 to-emerald-500/20" },
-    { id: 4, title: "Debugging Login", date: "2 days ago", preview: "Error: 500 Internal Server Error...", pinned: false, color: "from-orange-500/20 to-red-500/20" },
-    { id: 5, title: "Marketing Ideas", date: "Last Week", preview: "1. Social Media Campaign...", pinned: false, color: "from-indigo-500/20 to-violet-500/20" },
-    { id: 6, title: "Recipe: Lasagna", date: "Last Week", preview: "Ingredients needed: ...", pinned: false, color: "from-gray-500/20 to-slate-500/20" },
+    { id: 1, title: "React Architecture Plan", date: "2 mins ago", preview: "Let's discuss the folder structure...", pinned: true, type: 'favorites' as const, color: "from-blue-500/20 to-cyan-500/20" },
+    { id: 2, title: "Python Data Analysis", date: "4 hours ago", preview: "Import pandas as pd...", pinned: true, type: 'favorites' as const, color: "from-purple-500/20 to-pink-500/20" },
+    { id: 3, title: "Email Drafts", date: "Yesterday", preview: "Subject: Project update...", pinned: false, type: 'all' as const, color: "from-green-500/20 to-emerald-500/20" },
+    { id: 4, title: "Debugging Login", date: "2 days ago", preview: "Error: 500 Internal Server Error...", pinned: false, type: 'all' as const, color: "from-orange-500/20 to-red-500/20" },
+    { id: 5, title: "Marketing Ideas", date: "Last Week", preview: "1. Social Media Campaign...", pinned: false, type: 'archived' as const, color: "from-indigo-500/20 to-violet-500/20" },
+    { id: 6, title: "Recipe: Lasagna", date: "Last Week", preview: "Ingredients needed: ...", pinned: false, type: 'all' as const, color: "from-gray-500/20 to-slate-500/20" },
 ];
 
-export function RecentChatsGrid() {
+type FilterType = 'all' | 'favorites' | 'archived';
+
+interface RecentChatsGridProps {
+    filter: FilterType;
+}
+
+export function RecentChatsGrid({ filter }: RecentChatsGridProps) {
+    const filteredChats = filter === 'all'
+        ? recentChats.filter(chat => chat.type === 'all' || chat.type === 'favorites')
+        : recentChats.filter(chat => chat.type === filter);
+
     return (
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {recentChats.map((chat, index) => (
+            {filteredChats.map((chat, index) => (
                 <motion.div
                     key={chat.id}
                     initial={{ opacity: 0, scale: 0.95 }}
