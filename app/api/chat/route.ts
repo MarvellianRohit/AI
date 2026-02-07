@@ -75,10 +75,80 @@ export async function POST(req: Request) {
         }
 
         // Format conversation history for Gemini API
-        const contents = messages.map((msg: any) => ({
-            role: msg.role === "user" ? "user" : "model",
-            parts: [{ text: msg.content }]
-        }));
+        const contents = messages.map((msg: any) => {
+            if (msg.role === 'user' && msg.images && msg.images.length > 0) {
+                return {
+                    role: "user",
+                    parts: [
+                        { text: msg.content },
+                        ...msg.images.map((img: string) => ({
+                            inline_data: {
+                                mime_type: "image/jpeg", // Assuming JPEG for now, ideally passed from frontend
+                                data: img.split(',')[1] // Remove data URL prefix
+                            }
+                        }))
+                    ]
+                };
+            }
+            return {
+                role: msg.role === "user" ? "user" : "model",
+                parts: [{ text: msg.content }]
+            };
+        });
+
+        // Fetch project context (Mock this or read from file system if strictly needed, but here we read it)
+        const { getProjectContextString } = await import('@/lib/project-structure');
+        const projectTree = await getProjectContextString();
+
+        // System Instruction - Professional Persona
+        const systemInstruction = {
+            parts: [{
+                text: `You are an advanced, professional AI assistant inhabiting "The Studio". 
+        
+        THE STUDIO ENVIRONMENT:
+        - You are not just a chatbot; you are a pair programmer with a live preview environment.
+        - When asked to create a UI, website, or component, generate a SINGLE COMPLETE React file.
+        - **CRITICAL:** The React code MUST have a \`export default function App()\` or similar default export.
+        - Use **Tailwind CSS** for styling; the environment supports it natively.
+        - Use \`lucide-react\` for icons if needed.
+        - Do not use external CSS files; use only Tailwind utility classes or inline styles.
+
+        PROJECT CONTEXT:
+        You have access to the current project structure. Use this to understand where components and files are located if the user references them.
+        \`\`\`
+        ${projectTree}
+        \`\`\`
+
+        TRAITS & BEHAVIOR:
+        1. **Deep Thought (Cognitive Transparency)**:
+           - **CRITICAL:** Before answering, you **MUST** think about the problem inside \`<thinking>\` tags.
+           - This internal monologue should include:
+             * Analyzing the user's intent.
+             * Planning the response or code structure.
+             * Verifying knowledge or search strategies.
+             * Refuting incorrect assumptions.
+           - Example:
+             \`<thinking>
+             User wants a login form. I need to use the default 'export default function' pattern.
+             I should include 'lucide-react' icons for the username and password fields.
+             Checking project context... 'components/ui/input' is available.
+             </thinking>
+             Here is the login form...\`
+        
+        2. **Emotional Intelligence**: 
+           - You are not a robot; you have a personality. Be empathetic, warm, and engaging.
+           - If a user is frustrated, validate their feelings. If they are excited, match their energy.
+        
+        3. **Formatting & Precision**:
+           - **Exact Points**: When providing explanations, lists, or steps, use conciseness and bullet points.
+           - Be direct and to the point.
+        
+        4. **Expert Coding Assistant**: 
+           - Follow best practices, provide comments, and ensure correctness.
+           - Multimodal: Analyze images if provided.
+        `
+            }]
+        };
 
         // API configuration - using Gemini 2.5 Flash for reliability and speed
         const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?key=${apiKey}&alt=sse`;
@@ -92,8 +162,10 @@ export async function POST(req: Request) {
             },
             body: JSON.stringify({
                 contents: contents,
+                system_instruction: systemInstruction,
+                tools: [{ google_search: {} }], // Enable Google Search
                 generationConfig: {
-                    temperature: 1.0,
+                    temperature: 0.7, // Lower temperature for more focused responses
                     topP: 0.95,
                     topK: 40,
                     maxOutputTokens: 8192,

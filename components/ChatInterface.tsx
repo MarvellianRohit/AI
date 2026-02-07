@@ -2,19 +2,28 @@
 
 import React, { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Send, Sparkles, Paperclip, X, Image as ImageIcon } from "lucide-react";
+import { Send, Sparkles, Paperclip, X, Image as ImageIcon, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { MessageBubble } from "@/components/MessageBubble";
 import { cn } from "@/lib/utils";
+import { NeuralStatus } from "@/components/neural/NeuralStatus";
 
 interface Message {
     role: "user" | "model";
     content: string;
+    images?: string[];
+    thought?: string;
+    isThinking?: boolean;
 }
 
-export function ChatInterface() {
+interface ChatInterfaceProps {
+    isInStudio?: boolean;
+    onCodeGenerated?: (code: string) => void;
+}
+
+export function ChatInterface({ isInStudio = false, onCodeGenerated }: ChatInterfaceProps) {
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState("");
     const [isLoading, setIsLoading] = useState(false);
@@ -47,54 +56,164 @@ export function ChatInterface() {
         e.stopPropagation();
         setDragActive(false);
         if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-            setSelectedFile(e.dataTransfer.files[0]);
+            const file = e.dataTransfer.files[0];
+            if (file.type.startsWith('image/')) {
+                setSelectedFile(file);
+            } else {
+                alert("Currently only images are supported for analysis.");
+            }
         }
     };
 
     const clearFile = () => setSelectedFile(null);
+
+    const convertFileToBase64 = (file: File): Promise<string> => {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+        });
+    };
+
+    // Helper to extract the last code block from markdown
+    const extractLastCodeBlock = (text: string): string | null => {
+        const codeBlockRegex = /```(?:jsx|tsx|javascript|js|react)?\s*([\s\S]*?)```/g;
+        let match;
+        let lastCode = null;
+
+        while ((match = codeBlockRegex.exec(text)) !== null) {
+            lastCode = match[1];
+        }
+        return lastCode;
+    };
+
+    const [isNeuralMode, setIsNeuralMode] = useState(false);
+
+    // Initial check for neural core availability or preference could go here
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if ((!input.trim() && !selectedFile) || isLoading) return;
 
         let userContent = input;
+        let images: string[] = [];
+
         if (selectedFile) {
-            userContent += `\n\n[Attached File: ${selectedFile.name}]`;
+            // Convert to base64
+            const base64 = await convertFileToBase64(selectedFile);
+            images = [base64];
+            userContent += `\n\n[Attached Image: ${selectedFile.name}]`;
         }
 
-        const userMessage = { role: "user" as const, content: userContent };
+        const userMessage: Message = { role: "user", content: userContent, images };
         setMessages((prev) => [...prev, userMessage]);
         setInput("");
         setSelectedFile(null);
         setIsLoading(true);
 
         try {
-            const response = await fetch("/api/chat", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ messages: [...messages, userMessage] }),
-            });
+            // Prepare messages for API (include images if present)
+            const apiMessages = [...messages, userMessage];
 
-            if (!response.ok) throw new Error("Failed to send message");
-            if (!response.body) throw new Error("No response body");
-
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let aiMessage = { role: "model" as const, content: "" };
+            let aiMessage: Message = { role: "model", content: "" };
+            let fullResponse = ""; // Accumulator for raw stream parsing
 
             setMessages((prev) => [...prev, aiMessage]);
 
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                const text = new TextDecoder().decode(value);
-                aiMessage = { ...aiMessage, content: aiMessage.content + text };
+            if (isNeuralMode) {
+                // --- LOCAL NEURAL CORE EXECUTION ---
+                const { neuralCore } = await import('@/lib/neural-core');
 
-                // Update the last message
-                setMessages((prev) => [
-                    ...prev.slice(0, -1),
-                    { ...aiMessage },
-                ]);
+                // Initialize if needed (this might trigger the download)
+                if (!neuralCore.isReady()) {
+                    await neuralCore.initialize();
+                }
+
+                await neuralCore.generateStream(apiMessages, (chunk) => {
+                    fullResponse += chunk;
+
+                    // Simple passthrough for now, Neural Core doesn't support <thinking> tags natively yet
+                    // But we can add that prompt engineering later
+                    const newContent = aiMessage.content + chunk;
+                    aiMessage = { ...aiMessage, content: newContent };
+
+                    setMessages((prev) => [
+                        ...prev.slice(0, -1),
+                        { ...aiMessage },
+                    ]);
+
+                    // LIVE PREVIEW UPDATE
+                    // Check if there's a code block and update the studio
+                    if (onCodeGenerated) {
+                        const code = extractLastCodeBlock(newContent);
+                        if (code) {
+                            onCodeGenerated(code);
+                        }
+                    }
+                });
+
+            } else {
+                // --- CLOUD GEMINI EXECUTION ---
+                const response = await fetch("/api/chat", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ messages: apiMessages }),
+                });
+
+                if (!response.ok) throw new Error("Failed to send message");
+                if (!response.body) throw new Error("No response body");
+
+                const reader = response.body.getReader();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    const text = new TextDecoder().decode(value);
+
+                    // --- THOUGHT PARSING LOGIC ---
+                    fullResponse += text;
+
+                    // Regex to extract thought content: <thinking> content </thinking>
+                    const thoughtStart = fullResponse.indexOf('<thinking>');
+                    const thoughtEnd = fullResponse.indexOf('</thinking>');
+
+                    let thoughtContent = '';
+                    let finalContent = fullResponse;
+                    let isThinking = false;
+
+                    if (thoughtStart !== -1) {
+                        if (thoughtEnd !== -1) {
+                            thoughtContent = fullResponse.substring(thoughtStart + 10, thoughtEnd);
+                            finalContent = fullResponse.substring(0, thoughtStart) + fullResponse.substring(thoughtEnd + 11);
+                            isThinking = false;
+                        } else {
+                            thoughtContent = fullResponse.substring(thoughtStart + 10);
+                            finalContent = fullResponse.substring(0, thoughtStart);
+                            isThinking = true;
+                        }
+                    } else {
+                        // No thought tags found yet, standard streaming
+                        finalContent = fullResponse;
+                    }
+
+                    aiMessage = {
+                        ...aiMessage,
+                        content: finalContent,
+                        thought: thoughtContent,
+                        isThinking: isThinking
+                    };
+
+                    setMessages((prev) => [
+                        ...prev.slice(0, -1),
+                        { ...aiMessage },
+                    ]);
+
+                    if (onCodeGenerated) {
+                        const code = extractLastCodeBlock(finalContent);
+                        if (code) onCodeGenerated(code);
+                    }
+                }
             }
         } catch (error) {
             console.error("Error:", error);
@@ -105,9 +224,14 @@ export function ChatInterface() {
 
     return (
         <div
-            className="flex flex-col w-full h-full max-w-5xl mx-auto"
+            className={cn(
+                "flex flex-col w-full h-full mx-auto",
+                isInStudio ? "max-w-none" : "max-w-5xl"
+            )}
             onDragEnter={handleDrag}
         >
+            <NeuralStatus />
+
             {/* Full Screen Drag Overlay */}
             <AnimatePresence>
                 {dragActive && (
@@ -147,7 +271,13 @@ export function ChatInterface() {
                         </motion.div>
                     ) : (
                         messages.map((msg, index) => (
-                            <MessageBubble key={index} role={msg.role} content={msg.content} />
+                            <MessageBubble
+                                key={index}
+                                role={msg.role}
+                                content={msg.content}
+                                thought={msg.thought}
+                                isThinking={msg.isThinking}
+                            />
                         ))
                     )}
                 </AnimatePresence>
@@ -160,7 +290,10 @@ export function ChatInterface() {
             </div>
 
             {/* Input Area - FIXED to viewport bottom */}
-            <div className="fixed bottom-0 left-0 right-0 p-4 border-t border-white/10 bg-black/80 backdrop-blur-md z-10 max-w-5xl mx-auto">
+            <div className={cn(
+                "fixed bottom-0 left-0 right-0 p-4 border-t border-white/10 bg-black/80 backdrop-blur-md z-10",
+                isInStudio ? "absolute w-full" : "fixed max-w-5xl mx-auto"
+            )}>
                 {/* File Preview */}
                 <AnimatePresence>
                     {selectedFile && (
@@ -209,23 +342,48 @@ export function ChatInterface() {
                     <Input
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
-                        placeholder="Type a message..."
-                        className="pl-12 pr-12 py-6 text-base rounded-full bg-secondary/50 border-white/5 focus-visible:ring-primary/50"
+                        placeholder={isNeuralMode ? "Ask Neural Core (Local)..." : "Type a message..."}
+                        className={cn(
+                            "pl-12 pr-28 py-6 text-base rounded-full border-white/5 focus-visible:ring-primary/50 transition-colors",
+                            isNeuralMode ? "bg-green-950/20 border-green-500/20 placeholder:text-green-500/50" : "bg-secondary/50"
+                        )}
                         disabled={isLoading}
                         autoFocus
                     />
+
+                    {/* Neural Toggle */}
+                    <div className="absolute right-14 top-1/2 -translate-y-1/2">
+                        <button
+                            type="button"
+                            onClick={() => setIsNeuralMode(!isNeuralMode)}
+                            className={cn(
+                                "flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-mono font-bold border transition-all",
+                                isNeuralMode
+                                    ? "bg-green-500/20 text-green-400 border-green-500/50"
+                                    : "bg-white/5 text-muted-foreground border-white/10 hover:bg-white/10"
+                            )}
+                            title="Toggle Local Neural Core (WebGPU)"
+                        >
+                            <Zap className={cn("w-3 h-3", isNeuralMode && "fill-current")} />
+                            {isNeuralMode ? "CORE:ON" : "CLOUD"}
+                        </button>
+                    </div>
+
                     <Button
                         type="submit"
                         size="icon"
                         disabled={isLoading || (!input.trim() && !selectedFile)}
-                        className="absolute right-1.5 rounded-full h-9 w-9 bg-primary hover:bg-primary/90 transition-all hover:scale-105"
+                        className={cn(
+                            "absolute right-1.5 rounded-full h-9 w-9 transition-all hover:scale-105",
+                            isNeuralMode ? "bg-green-600 hover:bg-green-500" : "bg-primary hover:bg-primary/90"
+                        )}
                     >
                         <Send className="h-4 w-4" />
                         <span className="sr-only">Send</span>
                     </Button>
                 </form>
                 <div className="mt-2 text-center text-xs text-muted-foreground">
-                    AI may display inaccurate info, please double check.
+                    {isNeuralMode ? "Running locally on WebGPU (Project OVERCLOCK)" : "AI may display inaccurate info, please double check."}
                 </div>
             </div>
         </div >
