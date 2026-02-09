@@ -12,46 +12,7 @@ interface PreviewPanelProps {
 }
 
 export function PreviewPanel({ code }: PreviewPanelProps) {
-    const { theme } = useTheme(); // For future syncing with app theme
-
-    // Default template
-    const defaultCode = `import React from 'react';
-        
-export default function App() {
-  return (
-    <div style={{ 
-      fontFamily: 'system-ui, sans-serif', 
-      textAlign: 'center', 
-      padding: '40px',
-      background: 'linear-gradient(to bottom right, #e0f2fe, #f0fdf4)',
-      minHeight: '100vh',
-      display: 'flex',
-      flexDirection: 'column',
-      justifyContent: 'center',
-      alignItems: 'center'
-    }}>
-      <h1 style={{ fontSize: '3rem', fontWeight: '800', backgroundClip: 'text', WebkitBackgroundClip: 'text', color: 'transparent', backgroundImage: 'linear-gradient(to right, #2563eb, #16a34a)' }}>
-        Hello Studio
-      </h1>
-      <p style={{ color: '#4b5563', fontSize: '1.25rem', marginTop: '1rem' }}>
-        Start building with the AI to see your changes here instantly.
-      </p>
-    </div>
-  );
-}`;
-
-    const [files, setFiles] = useState<SandpackFiles>({
-        "App.js": defaultCode,
-    });
-
-    // Update files when code changes
-    useEffect(() => {
-        if (code) {
-            setFiles({
-                "App.js": code,
-            });
-        }
-    }, [code]);
+    const [canvasUrl, setCanvasUrl] = useState("http://localhost:5175");
 
     return (
         <motion.div
@@ -61,28 +22,23 @@ export default function App() {
         >
             <div className="flex-none h-12 border-b border-border/50 flex items-center px-4 justify-between bg-card/50 backdrop-blur-sm">
                 <h2 className="font-semibold text-sm tracking-tight flex items-center gap-2">
-                    <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
-                    Live Preview
+                    <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                    Nexus Canvas
                 </h2>
-                <div className="text-xs text-muted-foreground">
-                    Powered by Sandpack
+                <div className="flex items-center gap-4">
+                    <span className="text-[10px] bg-emerald-500/10 text-emerald-500 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                        HMR ACTIVE
+                    </span>
+                    <div className="text-xs text-muted-foreground">
+                        Local Vite Sandbox
+                    </div>
                 </div>
             </div>
-            <div className="flex-1 overflow-hidden sandbox-container">
-                <Sandpack
-                    template="react"
-                    theme={theme === 'dark' ? 'dark' : 'light'}
-                    files={files}
-                    options={{
-                        showNavigator: true,
-                        showTabs: true,
-                        externalResources: ["https://cdn.tailwindcss.com"],
-                        classes: {
-                            "sp-wrapper": "h-full",
-                            "sp-layout": "h-full rounded-none border-none",
-                            "sp-stack": "h-full",
-                        }
-                    }}
+            <div className="flex-1 overflow-hidden bg-zinc-950">
+                <iframe
+                    src={canvasUrl}
+                    className="w-full h-full border-none"
+                    title="Generative Preview"
                 />
             </div>
         </motion.div>

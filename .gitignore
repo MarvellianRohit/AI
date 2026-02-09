@@ -39,3 +39,19 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# logs and pids
+*.log
+*.pid
+server_final.log
+next.log
+distillation.log
+indexer.log
+
+# brain/antigravity
+.antigravity/
+
+# python
+__pycache__/
+.venv/
+backend/current_response.txt

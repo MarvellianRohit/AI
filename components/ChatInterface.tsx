@@ -9,6 +9,8 @@ import { Card } from "@/components/ui/card";
 import { MessageBubble } from "@/components/MessageBubble";
 import { cn } from "@/lib/utils";
 import { NeuralStatus } from "@/components/neural/NeuralStatus";
+import { ArtifactPanel } from "./studio/ArtifactPanel";
+import { WorkbenchPanel } from "./studio/WorkbenchPanel";
 
 interface Message {
     role: "user" | "model";
@@ -16,6 +18,20 @@ interface Message {
     images?: string[];
     thought?: string;
     isThinking?: boolean;
+}
+
+interface ArtifactVersion {
+    id: string;
+    content: string;
+    timestamp: number;
+}
+
+interface Artifact {
+    id: string;
+    title: string;
+    content: string;
+    language: string;
+    versions: ArtifactVersion[];
 }
 
 interface ChatInterfaceProps {
@@ -29,6 +45,9 @@ export function ChatInterface({ isInStudio = false, onCodeGenerated }: ChatInter
     const [isLoading, setIsLoading] = useState(false);
     const [dragActive, setDragActive] = useState(false);
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
+    const [isTurbo, setIsTurbo] = useState(false);
+    const [activeArtifact, setActiveArtifact] = useState<Artifact | null>(null);
+    const [isWorkbenchOpen, setIsWorkbenchOpen] = useState(false);
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -158,7 +177,11 @@ export function ChatInterface({ isInStudio = false, onCodeGenerated }: ChatInter
                 const response = await fetch("/api/chat", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ messages: apiMessages }),
+                    body: JSON.stringify({
+                        message: userContent,
+                        turbo: isTurbo,
+                        use_mlx: true
+                    }),
                 });
 
                 if (!response.ok) throw new Error("Failed to send message");
@@ -197,21 +220,48 @@ export function ChatInterface({ isInStudio = false, onCodeGenerated }: ChatInter
                         finalContent = fullResponse;
                     }
 
-                    aiMessage = {
-                        ...aiMessage,
-                        content: finalContent,
-                        thought: thoughtContent,
-                        isThinking: isThinking
-                    };
-
                     setMessages((prev) => [
                         ...prev.slice(0, -1),
                         { ...aiMessage },
                     ]);
 
+                    // STREAM TO STUDIO WATCHER
+                    fetch("http://localhost:8080/api/studio/write", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ content: fullResponse })
+                    }).catch(console.error);
+
                     if (onCodeGenerated) {
                         const code = extractLastCodeBlock(finalContent);
-                        if (code) onCodeGenerated(code);
+                        if (code) {
+                            onCodeGenerated(code);
+                            setActiveArtifact(prev => {
+                                const version: ArtifactVersion = {
+                                    id: Date.now().toString(),
+                                    content: code,
+                                    timestamp: Date.now()
+                                };
+
+                                if (prev && prev.title === "Generated Code") {
+                                    // If same artifact, add version
+                                    return {
+                                        ...prev,
+                                        content: code,
+                                        versions: [...prev.versions, version]
+                                    };
+                                } else {
+                                    // new artifact
+                                    return {
+                                        id: Date.now().toString(),
+                                        title: "Generated Code",
+                                        content: code,
+                                        language: "tsx",
+                                        versions: [version]
+                                    };
+                                }
+                            });
+                        }
                     }
                 }
             }
@@ -351,6 +401,24 @@ export function ChatInterface({ isInStudio = false, onCodeGenerated }: ChatInter
                         autoFocus
                     />
 
+                    {/* Turbo Mode Toggle */}
+                    <div className="absolute right-32 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={() => setIsTurbo(!isTurbo)}
+                            className={cn(
+                                "flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-mono font-bold border transition-all",
+                                isTurbo
+                                    ? "bg-orange-500/20 text-orange-400 border-orange-500/50"
+                                    : "bg-white/5 text-muted-foreground border-white/10 hover:bg-white/10"
+                            )}
+                            title="Toggle Turbo Mode (Gemma-2-9B)"
+                        >
+                            <Zap className={cn("w-3 h-3", isTurbo && "fill-current")} />
+                            {isTurbo ? "TURBO:ON" : "TURBO:OFF"}
+                        </button>
+                    </div>
+
                     {/* Neural Toggle */}
                     <div className="absolute right-14 top-1/2 -translate-y-1/2">
                         <button
@@ -386,6 +454,21 @@ export function ChatInterface({ isInStudio = false, onCodeGenerated }: ChatInter
                     {isNeuralMode ? "Running locally on WebGPU (Project OVERCLOCK)" : "AI may display inaccurate info, please double check."}
                 </div>
             </div>
+            {/* Artifact Side Panel Overlay */}
+            {activeArtifact && (
+                <div className="fixed inset-y-0 right-0 w-1/3 z-50 bg-background/95 backdrop-blur-xl border-l border-border shadow-2xl">
+                    <ArtifactPanel
+                        artifact={activeArtifact}
+                        onClose={() => setActiveArtifact(null)}
+                    />
+                </div>
+            )}
+
+            {/* Workbench Panel Overlay */}
+            <WorkbenchPanel
+                isOpen={isWorkbenchOpen}
+                onClose={() => setIsWorkbenchOpen(false)}
+            />
         </div >
     );
 }

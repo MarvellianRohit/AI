@@ -5,7 +5,7 @@ import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { User, Bot, Copy, Check } from "lucide-react";
+import { User, Bot, Copy, Check, Sparkles } from "lucide-react";
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { ThinkingBubble } from "@/components/tools/ThinkingBubble";
@@ -22,9 +22,19 @@ export function MessageBubble({ role, content, thought, isThinking }: MessageBub
 
     return (
         <div className="flex flex-col w-full">
-            {/* Thought Bubble - Full width above the message */}
+            {/* Thought Process Accordion */}
             {!isUser && (thought || isThinking) && (
-                <ThinkingBubble content={thought || ""} isThinking={isThinking} />
+                <details className="mb-4 group">
+                    <summary className="flex items-center gap-2 cursor-pointer text-xs text-muted-foreground hover:text-foreground transition-colors list-none">
+                        <div className="flex items-center gap-2 bg-muted/30 px-3 py-1.5 rounded-full border border-border/50 group-open:bg-muted/50">
+                            <Sparkles size={12} className={cn(isThinking && "animate-spin")} />
+                            <span>{isThinking ? "Nexus is thinking..." : "View Thought Process"}</span>
+                        </div>
+                    </summary>
+                    <div className="mt-2 ml-4">
+                        <ThinkingBubble content={thought || ""} isThinking={isThinking} />
+                    </div>
+                </details>
             )}
 
             <motion.div

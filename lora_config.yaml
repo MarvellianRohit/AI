@@ -1,0 +1,20 @@
+# LoRA configuration for Nexus-Coder
+model: "mlx-community/Meta-Llama-3-8B-Instruct-4bit"
+train: true
+data: "data"
+iters: 500
+batch_size: 8
+learning_rate: 1e-5
+steps_per_report: 10
+steps_per_eval: 50
+val_batches: 25
+save_every: 100
+adapter_path: "models/nexus-coder"
+
+# LoRA specific parameters
+lora_parameters:
+  rank: 16
+  alpha: 32
+  dropout: 0.1
+  scale: 10.0
+  target_modules: ["q_proj", "v_proj", "k_proj", "o_proj"]

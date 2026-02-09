@@ -1,0 +1,15 @@
+{
+    "name": "Rohit Chandra",
+    "role": "BCA Student",
+    "background": "Aspiring AI Engineer specialized in high-performance computing.",
+    "preferences": {
+        "languages": [
+            "Python",
+            "C",
+            "TypeScript"
+        ],
+        "hardware": "MacBook Pro M3 Max (16-core Performance CPU, 128GB Unified Memory)",
+        "tone": "Professional, Engaged, Engineering-focused"
+    },
+    "project_context": "Nexus-AI - A high-end agentic AI assistant suite optimized for Apple Silicon."
+}

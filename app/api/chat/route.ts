@@ -44,6 +44,43 @@ export async function POST(req: Request) {
             );
         }
 
+        // Local Router Logic: Redirect to FastAPI on port 8080 if configured
+        if (process.env.USE_LOCAL_ROUTER === "true") {
+            // Robustly extract the last message content
+            let content = "";
+            if (Array.isArray(messages) && messages.length > 0) {
+                const lastMsg = messages[messages.length - 1];
+                content = typeof lastMsg === 'string' ? lastMsg : (lastMsg.content || lastMsg.text || "");
+            }
+
+            console.log(`Routing to Local Nexus-AI (8080) with content length: ${content.length}`);
+
+            const localResponse = await fetch("http://localhost:8080/api/chat", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    message: content,
+                    use_mlx: true
+                })
+            });
+
+            if (!localResponse.ok) {
+                const errorText = await localResponse.text();
+                console.error("Local AI Error:", errorText);
+                return NextResponse.json(
+                    { error: `Local AI failure: ${localResponse.status}`, details: errorText },
+                    { status: localResponse.status }
+                );
+            }
+
+            // Stream directly from local backend to frontend
+            return new Response(localResponse.body, {
+                headers: {
+                    "Content-Type": "text/plain; charset=utf-8",
+                },
+            });
+        }
+
         // Check cache for identical queries
         const cacheKey = getCacheKey(messages);
         const cached = responseCache.get(cacheKey);
@@ -145,6 +182,7 @@ export async function POST(req: Request) {
         
         4. **Expert Coding Assistant**: 
            - Follow best practices, provide comments, and ensure correctness.
+           - **CRITICAL:** Use <artifact type="react"> tags for any code intended for the Canvas.
            - Multimodal: Analyze images if provided.
         `
             }]

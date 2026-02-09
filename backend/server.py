@@ -6,11 +6,12 @@ from pydantic import BaseModel
 import uvicorn
 import asyncio
 import os
+import json
 
 # Import backend modules
 from backend.rag import rag_service
 from backend.ingest import ingest_documents
-from backend.agents.workflow import run_feature_workflow
+from backend.agents.workflow import run_nexus_workflow
 from backend.vision import generate_code_from_image
 from backend.search_service import search_service
 from backend.architect.agent import architect_agent
@@ -19,6 +20,7 @@ from backend.architect.ingest import ingest_codebase
 # --- Data Models (Must be defined before use) ---
 class ChatRequest(BaseModel):
     message: str
+    use_mlx: bool = False
 
 class AgentRequest(BaseModel):
     feature: str
@@ -45,13 +47,90 @@ app.mount("/static/social", StaticFiles(directory="backend/static/social"), name
 def read_root():    
     return {"status": "Nexus-AI Server Running"}
 
-# 1. RAG Chat (Deep Research)
+# 1. Nexus-AI Supercharged Chat
+class AdvancedChatRequest(BaseModel):
+    message: str
+    turbo: bool = False
+    use_mlx: bool = True
+    self_correct: bool = False
+    polish_ui: bool = False
+    current_code: str = ""
+    use_global_context: bool = False
+
+class DebugRequest(BaseModel):
+    file_path: str
+    test_command: str
+
+class GlobalSearchRequest(BaseModel):
+    query: str
+
+class GenericGenerateRequest(BaseModel):
+    prompt: str
+    model_key: str = "reasoning"
+    max_tokens: int = 2048
+
+class ArtifactWriteRequest(BaseModel):
+    content: str
+    is_complete: bool = False
+
+@app.post("/api/studio/write")
+async def write_artifact(request: ArtifactWriteRequest):
+    output_path = "/Users/rohitchandra/Documents/AI/backend/current_response.txt"
+    mode = "w" if not request.is_complete else "w" # We overwrite for simpler HMR parsing
+    with open(output_path, mode) as f:
+        f.write(request.content)
+    return {"status": "success"}
+
+@app.post("/api/generate")
+async def generic_generate(request: GenericGenerateRequest):
+    from backend.mlx_engine import mlx_engine
+    result = mlx_engine.generate_response(request.prompt, model_key=request.model_key)
+    return {"result": result}
+
 @app.post("/api/chat")
-async def chat(request: ChatRequest):
+async def chat(request: AdvancedChatRequest):
+    # Load User Profile
+    profile_path = "backend/user_profile.json"
+    user_context = ""
+    if os.path.exists(profile_path):
+        with open(profile_path, 'r') as f:
+            profile = json.load(f)
+            user_context = f"User Profile: {json.dumps(profile)}\n\n"
+
+    system_prompt = f"{user_context}You are Nexus-AI, a high-performance assistant. Use deep reasoning for complex tasks.\n\n" \
+                    "IMPORTANT: When generating UI components, HTML, or React code, always wrap the code block in specialized <artifact> tags.\n" \
+                    "Example:\n<artifact type=\"react\">\n```tsx\n...\n```\n</artifact>\n" \
+                    "The frontend will render these artifacts in a dedicated Canvas."
+    
+    if request.use_global_context:
+        from backend.agents.global_context import global_manager
+        result = global_manager.tree_of_thought_search(request.message)
+        return StreamingResponse(iter([result]), media_type="text/plain")
+
+    if request.polish_ui:
+        from backend.mlx_engine import mlx_engine
+        result = mlx_engine.ui_polish(request.current_code, request.message)
+        return StreamingResponse(iter([result]), media_type="text/plain")
+    
+    if request.self_correct:
+        from backend.agents.workflow import run_nexus_workflow
+        # This is a block-and-return for now, ideally streamed
+        result = run_nexus_workflow(request.message)
+        return StreamingResponse(iter([result]), media_type="text/plain")
+
+    full_prompt = f"{system_prompt}\nUser: {request.message}\nAssistant:"
+
     async def generate():
         try:
-            for chunk in rag_service.query(request.message):
-                yield chunk
+            if request.use_mlx:
+                from backend.mlx_engine import mlx_engine
+                # Use the Dynamic Model Router for intelligent triage
+                for chunk in mlx_engine.routed_stream(request.message, system_prompt=system_prompt):
+                    yield chunk
+            else:
+                # Fallback to existing RAG service
+                for chunk in rag_service.query(request.message):
+                    yield chunk
         except Exception as e:
             yield f"Error: {str(e)}"
 
@@ -84,8 +163,7 @@ async def ingest():
 async def generate_agent(request: AgentRequest):
     async def run_workflow():
         try:
-            # We wrap the synchronous CrewAI/Lite call
-            result = run_feature_workflow(request.feature)
+            result = run_nexus_workflow(request.feature)
             yield f"Workflow Complete: {result}"
         except Exception as e:
             yield f"Error: {str(e)}"
@@ -218,5 +296,17 @@ async def social_agent_route(request: SocialRequest):
     except Exception as e:
         return {"status": "error", "message": f"Social Agent Failed: {str(e)}"}
 
+@app.post("/api/debug")
+async def debug_endpoint(request: DebugRequest):
+    from backend.agents.debugger import debugger_agent
+    success, message = debugger_agent.debug_file(request.file_path, request.test_command)
+    return {"success": success, "message": message}
+
+@app.post("/api/global_search")
+async def global_search_endpoint(request: GlobalSearchRequest):
+    from backend.agents.global_context import global_manager
+    result = global_manager.tree_of_thought_search(request.query)
+    return {"result": result}
+
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8080)
