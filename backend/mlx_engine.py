@@ -11,7 +11,7 @@ class MLXEngine:
         self.lock = threading.RLock()
         self.models_config = {
             "turbo": "mlx-community/gemma-2-9b-it-4bit",
-            "reasoning": "mlx-community/Meta-Llama-3-70B-Instruct-4bit",
+            "reasoning": "mlx-community/Meta-Llama-3.1-70B-Instruct-4bit",
             "logic": "mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit-mlx",
             "planner": "mlx-community/Llama-3.3-70B-Instruct-4bit",
             "critic": "mlx-community/Meta-Llama-3.1-70B-Instruct-bf16",
@@ -19,8 +19,6 @@ class MLXEngine:
             "vision": "mlx-community/Llama-3.2-11B-Vision-Instruct-4bit"
         }
         self.loaded_models = {} # model_key -> (model, tokenizer)
-        # Pre-load the Unified Model Pool (Gemma + Llama)
-        # We do this lazily on first request or explicitly here if needed.
 
     def load_model(self, model_key):
         with self.lock:
@@ -30,10 +28,8 @@ class MLXEngine:
             repo_id = self.models_config.get(model_key)
             print(f"Loading model: {repo_id}...")
         
-        # Configure MLX memory for massive KV-cache (128k tokens)
-        # Allocating 110GB unified memory for the active cache pool on the 128GB M3 Max
-        # This allows pinning multiple massive models (Llama-3.3-70B + Llama-3-70B + DeepSeek + Gemma)
-        mx.metal.set_cache_limit(110 * 1024 * 1024 * 1024) 
+        # Configure MLX memory for massive KV-cache (strictly capped at 100GB for Dual-Agent Mission)
+        mx.metal.set_cache_limit(100 * 1024 * 1024 * 1024) 
         os.environ["MLX_MAX_BITS"] = "32" 
         
         if model_key == "vision":
@@ -45,11 +41,11 @@ class MLXEngine:
             model, tokenizer = load(repo_id)
             self.loaded_models[model_key] = (model, tokenizer)
         
-        # Memory allocation hint for M3 Max visibility
+        # Memory allocation hint for M3 Max visibility (Strict 100GB Limit)
         if model_key in ["critic", "generator_hp"]:
-            print(f"SYSTEM: Allocating ~140GB (Ultra Precision) unified memory for High-Precision Agent ({model_key}). WARNING: May exceed physical RAM.")
+            print(f"SYSTEM: Allocating ~95GB (Ultra Precision) unified memory for High-Precision Agent ({model_key}).")
         elif model_key == "reasoning":
-            print(f"SYSTEM: Allocating ~115GB (Extreme Mode) unified memory for Teacher ({model_key}).")
+            print(f"SYSTEM: Allocating ~100GB (Mission Mode) unified memory for Dual Persona Teacher ({model_key}).")
         elif model_key == "turbo":
             print(f"SYSTEM: Allocating ~32GB unified memory for Student/Fast-Mode ({model_key}).")
 
@@ -74,9 +70,6 @@ class MLXEngine:
     def pre_load_context(self, context_text):
         """Pre-loads context into the KV-cache for 'Zero-Shot' latency."""
         print("Pre-loading persistent context into KV-cache...")
-        # In a real MLX-LM environment, we would use the model's 'warm-up'
-        # or cache-pinning APIs. Here we simulate it by running an initial pass.
-        # This pins the activations and tokens in the unified memory.
         self.generate_response(f"Context: {context_text}\nUnderstood.", model_key="reasoning")
         print("Persistent context active in GPU memory.")
 
@@ -91,7 +84,8 @@ class MLXEngine:
         Classify this user request into exactly one category: 'SIMPLE' or 'COMPLEX'.
         
         'SIMPLE' categories:
-        - UI/CSS styling requests.
+        - UI/CSS styling requests (e.g., "make it blue", "move the button").
+        - Rapid prototyping or tweaks to existing HTML/React artifacts.
         - Formatting or translation.
         - Simple greetings or general chat.
         - One-line bug fixes or variable renames.
@@ -107,7 +101,6 @@ class MLXEngine:
         Category (Return ONLY the word):"""
         
         result = self.generate_response(triage_prompt, model_key="turbo").strip().upper()
-        # Fallback to COMPLEX if ambiguous
         return "SIMPLE" if "SIMPLE" in result else "COMPLEX"
 
     def routed_stream(self, prompt, system_prompt=""):
@@ -129,7 +122,6 @@ class MLXEngine:
             from mlx_vlm import generate as generate_vlm
             from mlx_vlm.utils import load_image
             
-            # Sub-2s inference optimization: use MPS/Metal implicitly via MLX
             return generate_vlm(model, processor, image_path, prompt, max_tokens=max_tokens)
 
 mlx_engine = MLXEngine()

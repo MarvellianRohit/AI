@@ -21,6 +21,10 @@ from backend.architect.ingest import ingest_codebase
 from backend.agents.dual_loop import dual_agent_manager
 from backend.graph.impact_tool import analyze_impact
 from backend.trace_logger import trace_logger
+from backend.deep_research import deep_research_orchestrator
+from backend.operator import operator_agent
+from backend.agents.mission_commander import mission_commander
+from backend.agents.multi_agent_loop import mission_orchestrator
 
 # --- Data Models (Must be defined before use) ---
 class ChatRequest(BaseModel):
@@ -304,6 +308,21 @@ async def run_research(request: ResearchRequest):
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+@app.post("/api/research/deep")
+async def deep_research_route(request: ResearchRequest):
+    """
+    Executes the Deep Research Workflow: Local RAG + Web + 70B Synthesis.
+    """
+    async def generate():
+        try:
+            from backend.deep_research import deep_research_orchestrator
+            for chunk in deep_research_orchestrator.run_deep_research(request.query):
+                yield chunk
+        except Exception as e:
+            yield f"Deep Research Error: {str(e)}"
+
+    return StreamingResponse(generate(), media_type="text/plain")
+
 # 8. Nexus Creator (Video based Blog)
 @app.post("/api/creator/upload")
 async def creator_upload(file: UploadFile = File(...)):
@@ -340,6 +359,61 @@ async def creator_upload(file: UploadFile = File(...)):
         }
     except Exception as e:
         return {"status": "error", "message": f"Creator Flow Failed: {str(e)}"}
+
+# 11. System Operator & Sandbox
+class OperatorGoalRequest(BaseModel):
+    goal: str
+
+class ApprovalRequest(BaseModel):
+    approved: bool
+
+@app.post("/api/operator/run")
+async def run_operator(request: OperatorGoalRequest):
+    """
+    Triggers the OperatorAgent ReAct loop.
+    """
+    async def generate():
+        try:
+            for chunk in operator_agent.run_goal(request.goal):
+                yield chunk
+        except Exception as e:
+            yield f"Operator Error: {str(e)}"
+
+    return StreamingResponse(generate(), media_type="text/plain")
+
+@app.post("/api/operator/approve")
+async def approve_operator_command(request: ApprovalRequest):
+    """
+    User provides Y/N for a pending shell command.
+    """
+    try:
+        observation = operator_agent.approve_command(request.approved)
+        return {"status": "success", "observation": observation}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# 12. Dual-Agent Mission Orchestrator
+class MissionRequest(BaseModel):
+    goal: str
+
+@app.post("/api/mission/start")
+async def start_mission(request: MissionRequest):
+    """
+    Triggers the Mission Commander and Orchestrator.
+    """
+    async def generate():
+        try:
+            # 1. Plan Mission
+            tasks = mission_commander.create_task_list(request.goal)
+            yield f"🎖️ [Commander] Mission Plan Generated: {len(tasks)} tasks identified.\n"
+            
+            # 2. Execute Loop
+            for log in mission_orchestrator.execute_mission(tasks):
+                yield log
+        except Exception as e:
+            yield f"Mission Error: {str(e)}"
+
+    return StreamingResponse(generate(), media_type="text/plain")
 
 # 9. Graph-RAG Impact Analysis
 class GraphRequest(BaseModel):
