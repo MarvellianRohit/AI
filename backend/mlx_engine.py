@@ -13,7 +13,10 @@ class MLXEngine:
             "turbo": "mlx-community/gemma-2-9b-it-4bit",
             "reasoning": "mlx-community/Meta-Llama-3-70B-Instruct-4bit",
             "logic": "mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit-mlx",
-            "planner": "mlx-community/Llama-3.3-70B-Instruct-4bit"
+            "planner": "mlx-community/Llama-3.3-70B-Instruct-4bit",
+            "critic": "mlx-community/Meta-Llama-3.1-70B-Instruct-bf16",
+            "generator_hp": "mlx-community/Meta-Llama-3.1-70B-Instruct-bf16",
+            "vision": "mlx-community/Llama-3.2-11B-Vision-Instruct-4bit"
         }
         self.loaded_models = {} # model_key -> (model, tokenizer)
         # Pre-load the Unified Model Pool (Gemma + Llama)
@@ -33,12 +36,19 @@ class MLXEngine:
         mx.metal.set_cache_limit(110 * 1024 * 1024 * 1024) 
         os.environ["MLX_MAX_BITS"] = "32" 
         
-        # Load and store in our multi-model map
-        model, tokenizer = load(repo_id)
-        self.loaded_models[model_key] = (model, tokenizer)
+        if model_key == "vision":
+            from mlx_vlm import load as load_vlm
+            model, processor = load_vlm(repo_id)
+            self.loaded_models[model_key] = (model, processor)
+        else:
+            # Load and store in our multi-model map
+            model, tokenizer = load(repo_id)
+            self.loaded_models[model_key] = (model, tokenizer)
         
         # Memory allocation hint for M3 Max visibility
-        if model_key == "reasoning":
+        if model_key in ["critic", "generator_hp"]:
+            print(f"SYSTEM: Allocating ~140GB (Ultra Precision) unified memory for High-Precision Agent ({model_key}). WARNING: May exceed physical RAM.")
+        elif model_key == "reasoning":
             print(f"SYSTEM: Allocating ~115GB (Extreme Mode) unified memory for Teacher ({model_key}).")
         elif model_key == "turbo":
             print(f"SYSTEM: Allocating ~32GB unified memory for Student/Fast-Mode ({model_key}).")
@@ -109,5 +119,17 @@ class MLXEngine:
         full_prompt = f"{system_prompt}\nUser: {prompt}\nAssistant:"
         
         return self.stream_chat(full_prompt, model_key=model_key)
+
+    def generate_vision_response(self, prompt, image_path, model_key="vision", max_tokens=2048):
+        """Processes an image and text prompt using mlx-vlm."""
+        with self.lock:
+            self.load_model(model_key)
+            model, processor = self.loaded_models[model_key]
+            
+            from mlx_vlm import generate as generate_vlm
+            from mlx_vlm.utils import load_image
+            
+            # Sub-2s inference optimization: use MPS/Metal implicitly via MLX
+            return generate_vlm(model, processor, image_path, prompt, max_tokens=max_tokens)
 
 mlx_engine = MLXEngine()

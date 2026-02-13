@@ -35,11 +35,22 @@ Output ONLY valid JSON in this format:
 """
         response = mlx_engine.generate_response(prompt, model_key="planner")
         try:
-            # Simple JSON extraction in case model adds prose
-            json_start = response.find('{')
-            json_end = response.rfind('}') + 1
-            data = json.loads(response[json_start:json_end])
-            return MissionPlan(**data)
+            # More robust JSON extraction
+            import re
+            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            if json_match:
+                data = json.loads(json_match.group())
+                # Normalize keys just in case
+                normalized_data = {
+                    "task_name": data.get("task_name", "Mission"),
+                    "steps": data.get("steps", []),
+                    "coder_instructions": data.get("coder_instructions", data.get("coderinstructions", "")),
+                    "tester_instructions": data.get("tester_instructions", data.get("testerinstructions", "")),
+                    "linter_rules": data.get("linter_rules", data.get("linterules", []))
+                }
+                return MissionPlan(**normalized_data)
+            else:
+                raise ValueError("No JSON found in response")
         except Exception as e:
             print(f"❌ Planning Error: {e}\nRaw Response: {response}")
             # Fallback plan
@@ -71,6 +82,14 @@ class Orchestrator:
         self.coder = WorkerAgent("Coder", "logic")
         self.tester = WorkerAgent("Tester", "logic")
         self.linter = WorkerAgent("Linter", "turbo")
+
+    def preload_workers(self):
+        """Pins all 4 models in the 128GB unified memory pool."""
+        print("🚀 [Orchestrator] Pinning all units to unified memory (128GB RAM mode)...")
+        models = ["planner", "logic", "turbo"]
+        for m in models:
+            mlx_engine.load_model(m)
+        print("✅ All systems pinned and ready.")
 
     def run_mission(self, task: str):
         # 1. Plan

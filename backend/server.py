@@ -251,11 +251,12 @@ async def generate_agent(request: AgentRequest):
     return StreamingResponse(run_workflow(), media_type="text/plain")
 
 # 5. Vision Projector
-@app.post("/api/vision/generate")
+@app.post("/api/studio/vision")
 async def vision_generate(file: UploadFile = File(...)):
     async def process_vision():
         try:
             contents = await file.read()
+            from backend.vision import generate_code_from_image
             # Stream the response from the vision model
             for chunk in generate_code_from_image(contents):
                 yield chunk
